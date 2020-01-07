@@ -1,0 +1,178 @@
+#!/usr/bin/env python
+
+#############################################################################
+#
+# This is the main script that handles eeprom encoding and decoding
+#
+try:
+    import exceptions
+    import binascii
+    import time
+    import optparse
+    import warnings
+    import os
+    import subprocess
+    import sys
+    from array import array
+    import imp
+    from sonic_eeprom import eeprom_dts
+    import glob
+    from sonic_device_util import get_machine_info
+    from sonic_device_util import get_platform_info
+except ImportError, e:
+    raise ImportError (str(e) + "- required module not found")
+
+PLATFORM_ROOT = '/usr/share/sonic/device'
+CACHE_ROOT = '/var/cache/sonic/decode-syseeprom'
+CACHE_FILE = 'syseeprom_cache'
+
+def main():
+    support_eeprom_db = True
+    if not os.geteuid() == 0:
+        raise RuntimeError("must be root to run")
+
+    # Get platform name
+    platform = get_platform_info(get_machine_info())
+
+    platform_path = '/'.join([PLATFORM_ROOT, platform])
+
+    # Currently, don't support eeprom db on Arista platform
+    if 'arista' in platform_path:
+        support_eeprom_db = False
+    #
+    # Currently we only support board eeprom decode.
+    #
+    (opts, args) = get_cmdline_opts()
+
+    #
+    # load the target class file and instantiate the object
+    #
+    try:
+        m = imp.load_source('eeprom','/'.join([platform_path, 'plugins', 'eeprom.py']))
+    except IOError:
+        raise IOError("cannot load module: " + '/'.join([platform_path, 'plugins', 'eeprom.py']))
+
+    class_ = getattr(m, 'board')
+    t = class_('board', '','','')
+
+    #
+    # execute the command
+    #
+    run(t, opts, args, support_eeprom_db)
+
+#-------------------------------------------------------------------------------
+#
+# sets global variable "optcfg"
+#
+def get_cmdline_opts():
+    optcfg = optparse.OptionParser(usage="usage: %s [-s][-m]" % sys.argv[0])
+    optcfg.add_option("-d", dest="db", action="store_true",
+                      default=False, help="print eeprom from database")
+    optcfg.add_option("-s", dest="serial", action="store_true",
+                      default=False, help="print device serial number/service tag")
+    optcfg.add_option("-p", dest="modelstr", action="store_true", default=False,
+                      help="print the device product name")
+    optcfg.add_option("-m", dest="mgmtmac", action="store_true", default=False,
+                      help="print the base mac address for management interfaces")
+    optcfg.add_option("--init", dest="init", action="store_true", default=False,
+                      help="clear and initialize board eeprom cache")
+    return optcfg.parse_args()
+
+#-------------------------------------------------------------------------------
+#
+# Run
+#
+def run(target, opts, args, support_eeprom_db):
+
+    if support_eeprom_db and opts.db:
+        err = target.read_eeprom_db()
+        if err:
+            # Failed to read EEPROM information from database. Read from cache file
+            pass
+        else:
+            return 0
+
+    status = target.check_status()
+    if status <> 'ok':
+        sys.stderr.write("Device is not ready: " + status + "\n")
+        exit(0)
+
+    if not os.path.exists(CACHE_ROOT):
+        try:
+            os.makedirs(CACHE_ROOT)
+        except:
+            pass
+    if opts.init:
+        for file in glob.glob(os.path.join(CACHE_ROOT, '*')):
+            os.remove(file)
+
+    #
+    # only the eeprom classes that inherit from eeprom_base
+    # support caching. Others will work normally
+    #
+    try:
+        target.set_cache_name(os.path.join(CACHE_ROOT, CACHE_FILE))
+    except:
+        pass
+
+    e = target.read_eeprom()
+    if e is None :
+        return 0
+
+    try:
+        target.update_cache(e)
+    except:
+        pass
+
+    if opts.init:
+        err = target.update_eeprom_db(e)
+        if err:
+            print "Failed to update eeprom database"
+            return -1
+    elif opts.mgmtmac:
+        mm = target.mgmtaddrstr(e)
+        if mm != None:
+            print mm
+    elif opts.serial:
+        try:
+            serial = target.serial_number_str(e)
+        except NotImplemented, e:
+            print e
+        else:
+            print serial or "Undefined."
+    elif opts.modelstr:
+        mm = target.modelstr(e)
+        if mm != None:
+            print mm
+    else:
+        target.decode_eeprom(e)
+        (is_valid, valid_crc) = target.is_checksum_valid(e)
+        if is_valid:
+            print '(checksum valid)'
+        else:
+            print '(*** checksum invalid)'
+            # + ', should be 0x' + binascii.b2a_hex(array('I', [valid_crc])).upper() + ')'
+    return 0
+
+
+#
+# formats warnings
+#
+def mywarn(message, category, filename, lineno, line=None):
+    return '%s:%s : %s : %s\n' % (filename, lineno, category.__name__, message)
+
+#--------------------
+#
+# execution check
+#
+if __name__ == "__main__":
+    try:
+        warnings.simplefilter("always")
+        warnings.formatwarning = mywarn
+        exit(main())
+    except KeyboardInterrupt:
+        sys.stderr.write("\nInterrupted\n")
+        exit(1)
+    except (RuntimeError, OSError, IOError), errstr:
+        sys.stderr.write("%s : ERROR : %s\n" % (sys.argv[0], str(errstr)))
+        exit(1)

@@ -1,0 +1,58 @@
+#
+# This file MUST be edited with the 'visudo' command as root.
+#
+# Please consider adding local content in /etc/sudoers.d/ instead of
+# directly modifying this file.
+#
+# See the man page for details on how to write a sudoers file.
+#
+Defaults        env_reset
+#Defaults        mail_badpass
+Defaults        secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Defaults        env_keep += "SONIC_CLI_IFACE_MODE"
+Defaults        env_keep += "VTYSH_PAGER"
+Defaults        lecture_file = /etc/sudoers.lecture
+
+# Host alias specification
+
+# User alias specification
+
+# Cmnd alias specification
+# Note: bcmcmd is dangerous for users in read only netgroups because it may operate ASIC
+Cmnd_Alias      READ_ONLY_CMDS = /sbin/brctl show, \
+                                 /usr/bin/decode-syseeprom, \
+                                 /usr/bin/docker images *, \
+                                 /usr/bin/docker exec snmp cat /etc/snmp/snmpd.conf, \
+                                 /usr/bin/docker exec bgp cat /etc/quagga/bgpd.conf, \
+                                 /usr/bin/docker exec * ps aux, \
+                                 /usr/bin/docker ps*, \
+                                 /usr/bin/generate_dump, \
+                                 /usr/bin/lldpctl, \
+                                 /usr/bin/lldpshow, \
+                                 /usr/bin/psuutil *, \
+                                 /usr/bin/sensors, \
+                                 /usr/bin/sfputil show *, \
+                                 /usr/bin/teamshow, \
+                                 /usr/bin/vtysh -c show *, \
+                                 /bin/cat /var/log/syslog*, \
+                                 /usr/bin/tail -F /var/log/syslog
+
+Cmnd_Alias      PASSWD_CMDS = /usr/bin/config tacacs passkey *, \
+                              /usr/sbin/chpasswd *
+
+# User privilege specification
+root    ALL=(ALL:ALL) ALL
+
+# Allow all users to execute read only commands
+ALL     ALL=NOPASSWD: READ_ONLY_CMDS
+
+# Allow members of group sudo to execute any command
+%sudo   ALL=(ALL:ALL) NOPASSWD: ALL
+
+# Prevent password related command into syslog
+Defaults!PASSWD_CMDS !syslog
+
+# See sudoers(5) for more information on "#include" directives:
+
+#includedir /etc/sudoers.d
+

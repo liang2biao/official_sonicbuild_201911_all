@@ -1,0 +1,44 @@
+.ONESHELL:
+SHELL = /bin/bash
+.SHELLFLAGS += -e
+
+MAIN_TARGET = $(LLDPD)
+DERIVED_TARGETS = $(LIBLLDPCTL) $(LLDPD_DBG)
+
+LLDP_URL = http://ftp.debian.org/debian/pool/main/l/lldpd
+
+DSC_FILE = lldpd_$(LLDPD_VERSION_FULL).dsc
+ORIG_FILE = lldpd_$(LLDPD_VERSION).orig.tar.gz
+DEBIAN_FILE = lldpd_$(LLDPD_VERSION_FULL).debian.tar.xz
+
+DSC_FILE_URL = $(LLDP_URL)/$(DSC_FILE)
+ORIG_FILE_URL = $(LLDP_URL)/$(ORIG_FILE)
+DEBIAN_FILE_URL = $(LLDP_URL)/$(DEBIAN_FILE)
+
+$(addprefix $(DEST)/, $(MAIN_TARGET)): $(DEST)/% :
+	# Remove any stale files
+	rm -rf lldpd-$(LLDPD_VERSION)
+
+	# download debian LLDPDD
+	wget -NO "$(DSC_FILE)" $(DSC_FILE_URL)
+	wget -NO "$(ORIG_FILE)" $(ORIG_FILE_URL)
+	wget -NO "$(DEBIAN_FILE)" $(DEBIAN_FILE_URL)
+	dpkg-source -x lldpd_$(LLDPD_VERSION_FULL).dsc
+
+	pushd lldpd-$(LLDPD_VERSION)
+	git init
+	git add -f *
+	git commit -m "unmodified lldp source"
+
+	# Apply patches
+	stg init
+	stg import -s ../patch/series
+
+	# Build source and Debian packages
+	env "with_netlink_receive_bufsize=1024*1024" dpkg-buildpackage -rfakeroot -b -us -uc -j$(SONIC_CONFIG_MAKE_JOBS)
+	popd
+
+	# Move the newly-built .deb packages to the destination directory
+	mv $* $(DERIVED_TARGETS) $(DEST)/
+
+$(addprefix $(DEST)/, $(DERIVED_TARGETS)): $(DEST)/% : $(DEST)/$(MAIN_TARGET)

@@ -1,0 +1,63 @@
+{% from "dockers/dockerfile-macros.j2" import install_debian_packages, install_python_wheels, copy_files %}
+FROM docker-config-engine-stretch
+
+ARG docker_container_name
+RUN [ -f /etc/rsyslog.conf ] && sed -ri "s/%syslogtag%/$docker_container_name#%syslogtag%/;" /etc/rsyslog.conf
+
+# Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages
+RUN apt-get update &&   \
+    apt-get install -y  \
+        python-pip      \
+        libpython2.7    \
+        ipmitool        \
+        librrd8         \
+        librrd-dev      \
+        rrdtool         \
+        python-smbus    \
+        ethtool         \
+        dmidecode
+
+{% if docker_platform_monitor_debs.strip() -%}
+# Copy locally-built Debian package dependencies
+{{ copy_files("debs/", docker_platform_monitor_debs.split(' '), "/debs/") }}
+
+# Install locally-built Debian packages and implicitly install their dependencies
+{{ install_debian_packages(docker_platform_monitor_debs.split(' ')) }}
+{%- endif %}
+
+{% if docker_platform_monitor_pydebs.strip() -%}
+# Copy locally-built Debian package dependencies
+{{ copy_files("python-debs/", docker_platform_monitor_pydebs.split(' '), "/debs/") }}
+
+# Install locally-built Debian packages and implicitly install their dependencies
+{{ install_debian_packages(docker_platform_monitor_pydebs.split(' ')) }}
+{%- endif %}
+
+{% if docker_platform_monitor_whls.strip() -%}
+# Copy locally-built Python wheel dependencies
+{{ copy_files("python-wheels/", docker_platform_monitor_whls.split(' '), "/python-wheels/") }}
+
+# Install locally-built Python wheel dependencies
+{{ install_python_wheels(docker_platform_monitor_whls.split(' ')) }}
+{% endif %}
+
+# Clean up
+RUN apt-get purge -y           \
+        python-pip          && \
+    apt-get clean -y        && \
+    apt-get autoclean -y    && \
+    apt-get autoremove -y   && \
+    rm -rf /debs               \
+           /python-wheels      \
+           ~/.cache
+
+COPY ["docker_init.sh", "lm-sensors.sh", "/usr/bin/"]
+COPY ["docker-pmon.supervisord.conf.j2", "start.sh.j2", "/usr/share/sonic/templates/"]
+COPY ["ssd_tools/*", "/usr/bin/"]
+COPY ["files/supervisor-proc-exit-listener", "/usr/bin"]
+COPY ["critical_processes", "/etc/supervisor"]
+
+ENTRYPOINT ["/usr/bin/docker_init.sh"]

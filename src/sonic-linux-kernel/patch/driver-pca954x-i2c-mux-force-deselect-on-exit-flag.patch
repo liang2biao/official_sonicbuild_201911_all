@@ -1,0 +1,34 @@
+Adding PCA9548 I2C MUX force deselect-on-exit flag.
+
+From: wadelnn <wadelnn@users.noreply.github.com>
+
+
+---
+ drivers/i2c/muxes/i2c-mux-pca954x.c |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/muxes/i2c-mux-pca954x.c b/drivers/i2c/muxes/i2c-mux-pca954x.c
+index 9c4ac26..7dd92a2 100644
+--- a/drivers/i2c/muxes/i2c-mux-pca954x.c
++++ b/drivers/i2c/muxes/i2c-mux-pca954x.c
+@@ -120,6 +120,11 @@ static const struct i2c_device_id pca954x_id[] = {
+ };
+ MODULE_DEVICE_TABLE(i2c, pca954x_id);
+ 
++/* Force deselect-on-exit feature for PCA954X devices. Default is disabled. */
++static unsigned int force_deselect_on_exit = 0;
++module_param(force_deselect_on_exit, uint, S_IRUGO);
++MODULE_PARM_DESC(force_deselect_on_exit, "Force deselect-on-exit feature for PCA954X devices. Default is disabled.");
++
+ #ifdef CONFIG_OF
+ static const struct of_device_id pca954x_of_match[] = {
+ 	{ .compatible = "nxp,pca9540", .data = &chips[pca_9540] },
+@@ -273,7 +278,7 @@ static int pca954x_probe(struct i2c_client *client,
+ 			idle_disconnect_pd = pdata->modes[num].deselect_on_exit;
+ 		}
+ 		data->deselect |= (idle_disconnect_pd ||
+-				   idle_disconnect_dt) << num;
++				   idle_disconnect_dt || force_deselect_on_exit) << num;
+ 
+ 		ret = i2c_mux_add_adapter(muxc, force, num, class);
+ 

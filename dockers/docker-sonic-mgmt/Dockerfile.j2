@@ -1,0 +1,133 @@
+FROM ubuntu:16.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+RUN apt-get install -y \
+                openssh-server \
+                gcc \
+                vim \
+                make \
+                git \
+                sudo \
+                python \
+                python-dev \
+                python-cffi \
+                libffi-dev \
+                libssl-dev \
+                sshpass \
+                libxml2 \
+                libxslt1-dev \
+                python-setuptools \
+                build-essential \
+                curl \
+                cmake \
+                tcpdump \
+                python-dev \
+                python-scapy
+
+# For JNLP launcher
+RUN apt-get install -y default-jre
+
+# For syslog test
+RUN apt-get install -y rsyslog psmisc
+
+# Remove cffi 1.5.2, will install 1.10.0 by pip later
+RUN apt-get purge -y python-cffi python-cffi-backend
+# Remove pycparser 2.14, will install >=2.17 by pip later
+RUN apt-get purge -y python-ply python-pycparser
+
+RUN easy_install pip
+
+RUN pip install ipaddr \
+                lxml \
+                netaddr \
+                natsort \
+                six \
+                pexpect \
+                pyasn1==0.1.9 \
+                pysnmp==4.2.5 \
+                jinja2==2.7.2 \
+                cffi==1.10.0 \
+                paramiko==2.1.2 \
+                passlib \
+                ipython==5.4.1 \
+    && git clone https://github.com/p4lang/scapy-vxlan.git \
+    && cd scapy-vxlan \
+    && python setup.py install \
+    && cd .. \
+    && rm -fr scapy-vxlan \
+    && wget https://github.com/nanomsg/nanomsg/archive/1.0.0.tar.gz \
+    && tar xvfz 1.0.0.tar.gz \
+    && cd nanomsg-1.0.0    \
+    && mkdir -p build      \
+    && cd build            \
+    && cmake ..            \
+    && make install        \
+    && ldconfig            \
+    && cd ../..            \
+    && rm -fr nanomsg-1.0.0 \
+    && rm -f 1.0.0.tar.gz  \
+    && pip install nnpy    \
+    && pip install dpkt
+
+# Install Microsoft Azure Kusto Library for Python
+RUN pip install azure-kusto-data==0.0.13 \
+                azure-kusto-ingest==0.0.13
+
+# Install pytest-ansible module
+RUN pip install pytest-ansible==2.2.2
+
+## Copy and install sonic-mgmt docker dependencies
+COPY \
+{% for deb in docker_sonic_mgmt_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor -%}
+debs/
+
+RUN dpkg -i \
+{% for deb in docker_sonic_mgmt_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor %}
+
+RUN pip install ansible==2.8.7
+
+RUN mkdir /var/run/sshd
+EXPOSE 22
+
+# Add user
+ARG user
+ARG uid
+ARG guid
+ARG hostname
+
+ENV BUILD_HOSTNAME $hostname
+ENV USER $user
+
+RUN groupadd -f -r -g $guid g$user
+
+RUN useradd $user -l -u $uid -g $guid -d /var/$user -m -s /bin/bash
+
+COPY sonic-jenkins.pub /var/$user/.ssh/authorized_keys2
+
+RUN echo "Host *\n\tStrictHostKeyChecking no\n" > /var/$user/.ssh/config
+RUN chown $user /var/$user/.ssh -R
+RUN chmod go= /var/$user/.ssh -R
+
+# Add user to sudoers
+RUN echo "$user ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers
+
+USER $user
+
+# Install Azure CLI
+WORKDIR /var/$user
+RUN curl -L https://aka.ms/InstallAzureCliBundled -o azure-cli_bundle.tar.gz
+RUN tar -xvzf azure-cli_bundle.tar.gz
+RUN azure-cli_bundle_*/installer
+
+# Known bug: azure keyvault cannot work behind a proxy
+# Temporary fix: upgrade the azure-keyvault package within az cli
+# TODO: if azure-cli contains newer version azure-keyvault, remove this
+RUN ~/lib/azure-cli/bin/python -m pip install azure-keyvault==0.3.7 -U
+
+RUN git clone https://github.com/Azure/sonic-mgmt

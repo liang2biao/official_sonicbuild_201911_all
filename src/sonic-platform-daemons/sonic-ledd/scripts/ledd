@@ -1,0 +1,118 @@
+#!/usr/bin/env python
+
+"""
+    ledd
+    Front-panel LED control daemon for SONiC
+"""
+
+try:
+    import getopt
+    import os
+    import imp
+    import signal
+    import subprocess
+    import sys
+    import syslog
+    from swsscommon import swsscommon
+    from sonic_daemon_base import daemon_base
+    from sonic_daemon_base.daemon_base import Logger
+    from sonic_daemon_base.daemon_base import DaemonBase
+except ImportError, e:
+    raise ImportError (str(e) + " - required module not found")
+
+#============================= Constants =============================
+
+VERSION = '1.0'
+
+SYSLOG_IDENTIFIER = "ledd"
+
+USAGE_HELP="""
+Usage: ledd [options]
+
+Options:
+  -h,--help       Print this usage statement and exit
+  -v,--version    Print version information and exit
+"""
+
+LED_MODULE_NAME = "led_control"
+LED_CLASS_NAME = "LedControl"
+
+SELECT_TIMEOUT = 1000
+
+LEDUTIL_LOAD_ERROR = 1
+
+logger = Logger(SYSLOG_IDENTIFIER)
+
+class DaemonLedd(DaemonBase):
+    def __init__(self):
+        DaemonBase.__init__(self)
+
+    # Run daemon
+    def run(self):
+        # Parse options if provided
+        if (len(sys.argv) > 1):
+            try:
+                (options, remainder) = getopt.getopt(sys.argv[1:],
+                                                   'hv',
+                                                   ['help', 'version'])
+            except getopt.GetoptError, e:
+                print e
+                print USAGE_HELP
+                sys.exit(2)
+
+            for opt, arg in options:
+                if opt == '--help' or opt == '-h':
+                    print USAGE_HELP
+                    sys.exit(0)
+                elif opt == '--version' or opt == '-v':
+                    print 'ledd version ' + VERSION
+                    sys.exit(0)
+
+        # Load platform-specific LedControl module
+        try:
+            led_control = self.load_platform_util(LED_MODULE_NAME, LED_CLASS_NAME)
+        except Exception as e:
+            logger.log_error("Failed to load ledutil: %s" % (str(e)), True)
+            sys.exit(LEDUTIL_LOAD_ERROR)
+
+        # Open a handle to the Application database
+        appl_db = daemon_base.db_connect(swsscommon.APPL_DB)
+
+        # Subscribe to PORT table notifications in the Application DB
+        sel = swsscommon.Select()
+        sst = swsscommon.SubscriberStateTable(appl_db, swsscommon.APP_PORT_TABLE_NAME)
+        sel.addSelectable(sst)
+
+        # Listen indefinitely for changes to the PORT table in the Application DB
+        while True:
+            # Use timeout to prevent ignoring the signals we want to handle
+            # in signal_handler() (e.g. SIGTERM for graceful shutdown)
+            (state, c) = sel.select(SELECT_TIMEOUT)
+
+            if state == swsscommon.Select.TIMEOUT:
+                # Do not flood log when select times out
+                continue
+            if state != swsscommon.Select.OBJECT:
+                logger.log_warning("sel.select() did not  return swsscommon.Select.OBJECT")
+                continue
+
+            (key, op, fvp) = sst.pop()
+
+            # TODO: Once these flag entries have been removed from the DB,
+            # we can remove this check
+            if key in ["PortConfigDone", "PortInitDone"]:
+                continue
+
+            fvp_dict = dict(fvp)
+
+            if op == "SET" and "oper_status" in fvp_dict:
+                led_control.port_link_state_change(key, fvp_dict["oper_status"])
+
+        return 1
+
+def main():
+    ledd = DaemonLedd()
+    ledd.run()
+
+if __name__ == '__main__':
+    main()
